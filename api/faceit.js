@@ -122,7 +122,7 @@ export default async function handler(req, res) {
       const matchDeaths = playerStats["Deaths"] || "1";
       const matchKd = (parseInt(matchKills) / parseInt(matchDeaths)).toFixed(2);
 
-      const result = `${nick} | Последний матч: ${map}, ${matchKills}/${matchDeaths} (K/D: ${matchKd}), ${resultText}`;
+      const result = `${nick} | Last match: ${map}, ${matchKills}/${matchDeaths} (K/D: ${matchKd}), ${resultText}`;
       return res.status(200).send(result);
     }
 
