@@ -1,4 +1,4 @@
-// api/faceit.js - ФИНАЛЬНАЯ ВЕРСИЯ (ПРОВЕРЕНО)
+// api/faceit.js - ФИНАЛЬНАЯ ВЕРСИЯ (avg по варианту 3)
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   
@@ -44,9 +44,8 @@ export default async function handler(req, res) {
       return parseFloat(str) || 0;
     };
 
-    // правильные поля из диагностики
     const matches = cleanNumber(lifetime["Matches"]);
-    const kills = cleanNumber(lifetime["Total Kills with extended stats"]); // ключевое изменение
+    const kills = cleanNumber(lifetime["Total Kills with extended stats"]);
     const kd = cleanNumber(lifetime["Average K/D Ratio"]) || 1.0;
     const winRate = cleanNumber(lifetime["Win Rate %"]);
     const avgKills = matches > 0 ? (kills / matches).toFixed(1) : "0.0";
@@ -59,7 +58,7 @@ export default async function handler(req, res) {
 
     // ========== !avg ==========
     if (type === 'avg') {
-      const result = `${nick} | За ${matches} матчей: K/D: ${kd.toFixed(2)}, Убийств/игру: ${avgKills}, Винрейт: ${winRate}%`;
+      const result = `${nick} | Убийств/игру: ${avgKills}, K/D: ${kd.toFixed(2)}, Винрейт: ${winRate}%`;
       return res.status(200).send(result);
     }
 
