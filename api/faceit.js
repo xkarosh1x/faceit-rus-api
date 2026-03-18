@@ -63,65 +63,71 @@ export default async function handler(req, res) {
     }
 
     // ========== !last ==========
-if (type === 'last') {
-  const historyRes = await fetch(
-    `https://open.faceit.com/data/v4/players/${playerId}/history?game=cs2&offset=0&limit=1`,
-    { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
-  );
-  const historyData = await historyRes.json();
-  
-  if (!historyData.items || historyData.items.length === 0) {
-    return res.status(404).send(`${nick} | Нет данных о последнем матче`);
-  }
-  
-  const lastMatch = historyData.items[0];
-  
-  const matchRes = await fetch(
-    `https://open.faceit.com/data/v4/matches/${lastMatch.match_id}/stats`,
-    { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
-  );
-  const matchData = await matchRes.json();
+    if (type === 'last') {
+      try {
+        const historyRes = await fetch(
+          `https://open.faceit.com/data/v4/players/${playerId}/history?game=cs2&offset=0&limit=1`,
+          { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
+        );
+        const historyData = await historyRes.json();
 
-  let playerStats = null;
-  let playerTeamId = null;
+        if (!historyData.items || historyData.items.length === 0) {
+          return res.status(200).send(`${nick} | Нет данных о последнем матче`);
+        }
 
-  if (matchData.rounds && matchData.rounds[0] && matchData.rounds[0].teams) {
-    for (const team of matchData.rounds[0].teams) {
-      if (team.players) {
-        for (const player of team.players) {
-          if (player.player_id === playerId) {
-            playerStats = player.player_stats;
-            playerTeamId = team.team_id;
-            break;
+        const lastMatch = historyData.items[0];
+
+        const matchRes = await fetch(
+          `https://open.faceit.com/data/v4/matches/${lastMatch.match_id}/stats`,
+          { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
+        );
+        const matchData = await matchRes.json();
+
+        let playerStats = null;
+        let playerTeamId = null;
+
+        if (matchData?.rounds?.[0]?.teams) {
+          for (const team of matchData.rounds[0].teams) {
+            if (team?.players) {
+              for (const player of team.players) {
+                if (player?.player_id === playerId) {
+                  playerStats = player.player_stats;
+                  playerTeamId = team.team_id;
+                  break;
+                }
+              }
+            }
           }
         }
+
+        if (!playerStats) {
+          return res.status(200).send(`${nick} | Не удалось найти статистику игрока в последнем матче`);
+        }
+
+        // Определяем карту
+        let map = "неизвестно";
+        if (matchData?.rounds?.[0]?.round_stats?.Map) {
+          map = matchData.rounds[0].round_stats.Map;
+        } else if (lastMatch?.iwname) {
+          map = lastMatch.iwname;
+        }
+
+        // Результат матча
+        const winnerId = lastMatch.results?.winner;
+        const isWinner = winnerId === playerTeamId;
+        const resultText = isWinner ? "Победа" : "Поражение";
+
+        const matchKills = playerStats["Kills"] || "0";
+        const matchDeaths = playerStats["Deaths"] || "1";
+        const matchKd = (parseInt(matchKills) / parseInt(matchDeaths)).toFixed(2);
+
+        const result = `${nick} | Последний матч: ${map}, ${matchKills}/${matchDeaths} (K/D: ${matchKd}), ${resultText}`;
+        return res.status(200).send(result);
+      } catch (error) {
+        console.error('Ошибка в !last:', error);
+        return res.status(200).send(`${nick} | Ошибка при получении последнего матча`);
       }
     }
-  }
-
-  if (!playerStats) {
-    return res.status(404).send(`${nick} | Не удалось найти статистику игрока в последнем матче`);
-  }
-
-  const winnerId = lastMatch.results?.winner;
-  const isWinner = winnerId === playerTeamId;
-  
-  // === ИСПРАВЛЕНИЕ КАРТЫ ===
-  // Пробуем взять карту из matchData (там она точно есть)
-  let map = "неизвестно";
-  if (matchData.rounds && matchData.rounds[0] && matchData.rounds[0].round_stats && matchData.rounds[0].round_stats.Map) {
-    map = matchData.rounds[0].round_stats.Map;
-  } else if (lastMatch.iwname) {
-    // Если вдруг не нашли, используем iwname как запасной вариант
-    map = lastMatch.iwname;
-  }
-  // ==========================
-
-  const matchKills = playerStats["Kills"] || "0";
-  const matchDeaths = playerStats["Deaths"] || "1";
-  const matchKd = (parseInt(matchKills) / parseInt(matchDeaths)).toFixed(2);
-  const resultText = isWinner ? WIN" : "LOSE";
-
   const result = `${nick} | Последний матч: ${map}, ${matchKills}/${matchDeaths} (K/D: ${matchKd}), ${resultText}`;
   return res.status(200).send(result);
 }
