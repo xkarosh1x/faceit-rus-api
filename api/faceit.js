@@ -1,4 +1,4 @@
-// api/faceit.js - ИСПРАВЛЕННАЯ ВЕРСИЯ
+// api/faceit.js - ИСПРАВЛЕННАЯ ВЕРСИЯ С ПРАВИЛЬНЫМИ ПОЛЯМИ
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   
@@ -17,6 +17,11 @@ export default async function handler(req, res) {
       { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
     );
     const playerData = await playerRes.json();
+    
+    if (!playerData || playerData.errors) {
+      return res.status(404).json({ error: 'Игрок не найден' });
+    }
+    
     const playerId = playerData.player_id;
     
     // Получаем статистику
@@ -27,56 +32,73 @@ export default async function handler(req, res) {
     const statsData = await statsRes.json();
     
     // Базовые данные об игроке (уровень, эло)
-    const cs2Stats = playerData.games.cs2;
+    const cs2Stats = playerData.games?.cs2;
+    if (!cs2Stats) {
+      return res.status(404).json({ error: 'Игрок не играет в CS2' });
+    }
     
-    // Lifetime статистика
-    const lifetime = statsData.lifetime;
+    // Lifetime статистика - используем поля из твоего JSON
+    const lifetime = statsData.lifetime || {};
     
-    // Парсим числа
-    const kills = parseInt(lifetime["Kills"]?.replace(/\s/g, '') || "0");
-    const matches = parseInt(lifetime["Matches"]?.replace(/\s/g, '') || "1");
-    const winRate = lifetime["Win Rate %"]?.replace(/\s/g, '') || "0";
+    // Парсим числа (убираем пробелы и лишние символы)
+    const matches = parseInt(String(lifetime["Matches"] || "0").replace(/\s/g, '')) || 0;
+    const kills = parseInt(String(lifetime["Kills"] || "0").replace(/\s/g, '')) || 0;
     
-    // Для K/D используем готовое значение из API (оно точнее)
-    const kd = lifetime["Average K/D Ratio"] || "1.1";
+    // Берем готовый K/D Ratio из API (он уже посчитан правильно)
+    const kdRaw = String(lifetime["Average K/D Ratio"] || "1.0").replace(/\s/g, '');
+    const kd = parseFloat(kdRaw) || 1.0;
     
-    // Базовый ответ (как было)
+    // Винрейт
+    const winRateRaw = String(lifetime["Win Rate %"] || "0").replace(/\s/g, '');
+    const winRate = parseFloat(winRateRaw) || 0;
+    
+    // Базовый ответ (!elo)
     if (!type || type === 'base') {
-      const result = `${nick} | Уровень: ${cs2Stats.skill_level}, Эло: ${cs2Stats.faceit_elo}`;
+      const result = `${nick} | Уровень: ${cs2Stats.skill_level || 0}, Эло: ${cs2Stats.faceit_elo || 0}`;
       return res.status(200).send(result);
     }
     
-    // Средняя статистика
+    // Средняя статистика (!avg)
     if (type === 'avg') {
-      const avgKills = (kills / matches).toFixed(1);
-      // Смертей нет в прямом виде, но K/D = kills/deaths => deaths = kills / kd
-      const avgDeaths = (kills / matches / parseFloat(kd)).toFixed(1);
+      // Считаем убийств за матч
+      const avgKills = matches > 0 ? (kills / matches).toFixed(1) : "0.0";
       
-      const result = `${nick} | За ${matches} матчей: K/D: ${kd}, Убийств/игру: ${avgKills}, Смертей/игру: ${avgDeaths}, Винрейт: ${winRate}%`;
+      // Смерти считаем через K/D: deaths = kills / kd
+      const avgDeaths = (matches > 0 && kd > 0) 
+        ? (kills / matches / kd).toFixed(1) 
+        : "0.0";
+      
+      const result = `${nick} | За ${matches} матчей: K/D: ${kd.toFixed(2)}, Убийств/игру: ${avgKills}, Смертей/игру: ${avgDeaths}, Винрейт: ${winRate}%`;
       return res.status(200).send(result);
     }
     
-    // Последний матч
+    // Последний матч (!last)
     if (type === 'last') {
       // Берем первый сегмент (последняя карта)
-      const lastMatch = statsData.segments?.[0];
-      if (!lastMatch) {
+      const segments = statsData.segments || [];
+      if (segments.length === 0) {
         return res.status(404).send(`${nick} | Нет данных о последнем матче`);
       }
       
+      const lastMatch = segments[0];
       const map = lastMatch.label || "неизвестно";
-      const matchKills = lastMatch.stats?.["Kills"] || "0";
-      const matchDeaths = lastMatch.stats?.["Deaths"] || "0";
-      const matchKd = (parseInt(matchKills) / parseInt(matchDeaths)).toFixed(2);
-      const result = lastMatch.stats?.["Wins"] === "1" ? "Победа" : "Поражение";
+      
+      // Статистика матча
+      const matchKills = parseInt(String(lastMatch.stats?.["Kills"] || "0").replace(/\s/g, '')) || 0;
+      const matchDeaths = parseInt(String(lastMatch.stats?.["Deaths"] || "0").replace(/\s/g, '')) || 1;
+      const matchKd = (matchKills / matchDeaths).toFixed(2);
+      
+      // Результат (Wins = 1 значит победа)
+      const matchWon = lastMatch.stats?.["Wins"] === "1";
+      const result = matchWon ? "Победа" : "Поражение";
       
       return res.status(200).send(`${nick} | Последний матч: ${map}, ${matchKills}/${matchDeaths} (K/D: ${matchKd}), ${result}`);
     }
     
-    return res.status(400).json({ error: 'Неверный тип' });
+    return res.status(400).json({ error: 'Неверный тип. Используй: base, avg, last' });
     
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Ошибка сервера' });
+    console.error('Ошибка:', error);
+    res.status(500).json({ error: 'Ошибка сервера: ' + error.message });
   }
 }
