@@ -58,7 +58,7 @@ export default async function handler(req, res) {
 
     // ========== !avg ==========
     if (type === 'avg') {
-      const result = `${nick} | Убийств/игру: ${avgKills}, K/D: ${kd.toFixed(2)}, Винрейт: ${winRate}%`;
+      const result = `${nick} | AVG: ${avgKills}, KD: ${kd.toFixed(2)}, WR: ${winRate}%`;
       return res.status(200).send(result);
     }
 
