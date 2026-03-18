@@ -53,13 +53,13 @@ export default async function handler(req, res) {
 
     // ========== !elo ==========
     if (!type || type === 'base') {
-      const result = `${nick} | Уровень: ${cs2Stats.skill_level}, Эло: ${cs2Stats.faceit_elo}`;
+      const result = `${nick} | LVL: ${cs2Stats.skill_level}, ELO: ${cs2Stats.faceit_elo}`;
       return res.status(200).send(result);
     }
 
     // ========== !avg ==========
     if (type === 'avg') {
-      const result = `${nick} | Убийств/игру: ${avgKills}, K/D: ${kd.toFixed(2)}, Винрейт: ${winRate}%`;
+      const result = `${nick} | AVG: ${avgKills}, KD: ${kd.toFixed(2)}, WR: ${winRate}%`;
       return res.status(200).send(result);
     }
 
@@ -116,7 +116,7 @@ export default async function handler(req, res) {
       // Результат матча
       const winnerId = lastMatch.results?.winner;
       const isWinner = winnerId === playerTeamId;
-      const resultText = isWinner ? "Победа" : "Поражение";
+      const resultText = isWinner ? "WIN" : "LOSE";
 
       const matchKills = playerStats["Kills"] || "0";
       const matchDeaths = playerStats["Deaths"] || "1";
