@@ -1,4 +1,4 @@
-// api/faceit.js - АБСОЛЮТНЫЙ ФИНАЛ
+// api/faceit.js - ДИАГНОСТИЧЕСКАЯ ВЕРСИЯ
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   
@@ -8,10 +8,10 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Укажи ник: ?nick=xKarosh1x' });
   }
 
-  const FACEIT_API_KEY = 'cf9af14a-245b-4d36-80e4-721625d0532a'; // Твой ключ
+  const FACEIT_API_KEY = 'cf9af14a-245b-4d36-80e4-721625d0532a';
   
   try {
-    // ========== ПОЛУЧАЕМ ID И БАЗОВУЮ ИНФУ ==========
+    // ========== ПОЛУЧАЕМ ID ИГРОКА ==========
     const playerRes = await fetch(
       `https://open.faceit.com/data/v4/players?nickname=${nick}`,
       { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
@@ -19,7 +19,7 @@ export default async function handler(req, res) {
     const playerData = await playerRes.json();
     
     if (!playerData || playerData.errors) {
-      return res.status(404).json({ error: 'Игрок не найден' });
+      return res.status(404).json({ error: 'Игрок не найден', details: playerData });
     }
     
     const playerId = playerData.player_id;
@@ -37,18 +37,13 @@ export default async function handler(req, res) {
     
     const lifetime = statsData.lifetime || {};
 
-    // 🔧 Очистка чисел от любых символов (пробелы, запятые, точки)
+    // ========== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ОЧИСТКИ ЧИСЕЛ ==========
     const cleanNumber = (val) => {
-      if (!val) return 0;
-      const str = String(val).replace(/[^\d.-]/g, ''); // оставляем только цифры, точку, минус
-      return parseFloat(str) || 0;
+      if (val === undefined || val === null) return 0;
+      const str = String(val).replace(/[^\d.-]/g, '');
+      const num = parseFloat(str);
+      return isNaN(num) ? 0 : num;
     };
-
-    const matches = cleanNumber(lifetime["Matches"]);
-    const kills = cleanNumber(lifetime["Kills"]);
-    const kd = cleanNumber(lifetime["Average K/D Ratio"]) || 1.0;
-    const winRate = cleanNumber(lifetime["Win Rate %"]);
-    const avgKills = matches > 0 ? (kills / matches).toFixed(1) : "0.0";
 
     // ========== КОМАНДА !elo ==========
     if (!type || type === 'base') {
@@ -58,8 +53,25 @@ export default async function handler(req, res) {
 
     // ========== КОМАНДА !avg ==========
     if (type === 'avg') {
-      const result = `${nick} | За ${matches} матчей: K/D: ${kd.toFixed(2)}, Убийств/игру: ${avgKills}, Винрейт: ${winRate}%`;
-      return res.status(200).send(result);
+      // Для диагностики вернём и данные, и результат
+      const matches = cleanNumber(lifetime["Matches"]);
+      const kills = cleanNumber(lifetime["Kills"]);
+      const kd = cleanNumber(lifetime["Average K/D Ratio"]) || 1.0;
+      const winRate = cleanNumber(lifetime["Win Rate %"]);
+      const avgKills = matches > 0 ? (kills / matches).toFixed(1) : "0.0";
+
+      // Сформируем JSON с диагностикой
+      const debug = {
+        raw_lifetime: lifetime,
+        cleaned: { matches, kills, kd, winRate, avgKills }
+      };
+
+      // Можно вернуть и текст, и JSON (для браузера удобно JSON)
+      return res.status(200).json({
+        command: 'avg',
+        display: `${nick} | За ${matches} матчей: K/D: ${kd.toFixed(2)}, Убийств/игру: ${avgKills}, Винрейт: ${winRate}%`,
+        debug
+      });
     }
 
     // ========== КОМАНДА !last ==========
@@ -72,79 +84,66 @@ export default async function handler(req, res) {
       const historyData = await historyRes.json();
       
       if (!historyData.items || historyData.items.length === 0) {
-        return res.status(404).send(`${nick} | Нет данных о последнем матче`);
+        return res.status(404).json({ error: 'Нет данных о последнем матче', history: historyData });
       }
       
       const lastMatch = historyData.items[0];
       
-      // 🔍 Универсальный поиск статистики игрока в матче
+      // Получаем детальную статистику матча
+      const matchRes = await fetch(
+        `https://open.faceit.com/data/v4/matches/${lastMatch.match_id}/stats`,
+        { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
+      );
+      const matchData = await matchRes.json();
+
+      // Поиск игрока в matchData
       let playerStats = null;
-      
-      // teams может быть массивом или объектом с faction1/faction2
-      const teams = lastMatch.teams;
-      if (teams) {
-        if (Array.isArray(teams)) {
-          // Если teams — массив
-          for (const team of teams) {
-            if (team.players && Array.isArray(team.players)) {
-              for (const player of team.players) {
-                if (player.player_id === playerId) {
-                  playerStats = player.player_stats;
-                  break;
-                }
-              }
-            }
-          }
-        } else {
-          // Если teams — объект (faction1, faction2)
-          for (const faction of ['faction1', 'faction2']) {
-            if (teams[faction] && teams[faction].players) {
-              for (const player of teams[faction].players) {
-                if (player.player_id === playerId) {
-                  playerStats = player.player_stats;
-                  break;
-                }
+      let playerTeamId = null;
+
+      // matchData.rounds[0].teams — массив команд
+      if (matchData.rounds && matchData.rounds[0] && matchData.rounds[0].teams) {
+        for (const team of matchData.rounds[0].teams) {
+          if (team.players) {
+            for (const player of team.players) {
+              if (player.player_id === playerId) {
+                playerStats = player.player_stats;
+                playerTeamId = team.team_id;
+                break;
               }
             }
           }
         }
       }
-      
+
       if (!playerStats) {
-        return res.status(404).send(`${nick} | Не удалось найти статистику игрока в последнем матче`);
+        // Вернём диагностику
+        return res.status(404).json({
+          error: 'Не удалось найти статистику игрока в матче',
+          lastMatch,
+          matchData_rounds: matchData.rounds ? matchData.rounds[0] : null,
+          playerId
+        });
       }
-      
+
       // Определяем победу
       const winnerId = lastMatch.results?.winner;
-      let playerTeamId = null;
-      
-      if (teams) {
-        if (Array.isArray(teams)) {
-          for (const team of teams) {
-            if (team.players?.some(p => p.player_id === playerId)) {
-              playerTeamId = team.team_id;
-              break;
-            }
-          }
-        } else {
-          if (teams.faction1?.players?.some(p => p.player_id === playerId)) {
-            playerTeamId = teams.faction1.faction_id;
-          } else if (teams.faction2?.players?.some(p => p.player_id === playerId)) {
-            playerTeamId = teams.faction2.faction_id;
-          }
-        }
-      }
-      
       const isWinner = winnerId === playerTeamId;
-      
+
       const map = lastMatch.iwname || "неизвестно";
       const matchKills = playerStats["Kills"] || "0";
       const matchDeaths = playerStats["Deaths"] || "1";
       const matchKd = (parseInt(matchKills) / parseInt(matchDeaths)).toFixed(2);
       const resultText = isWinner ? "Победа" : "Поражение";
+
+      const display = `${nick} | Последний матч: ${map}, ${matchKills}/${matchDeaths} (K/D: ${matchKd}), ${resultText}`;
       
-      const result = `${nick} | Последний матч: ${map}, ${matchKills}/${matchDeaths} (K/D: ${matchKd}), ${resultText}`;
-      return res.status(200).send(result);
+      // Вернём и результат, и отладочную информацию
+      return res.status(200).json({
+        command: 'last',
+        display,
+        lastMatch,
+        playerStats
+      });
     }
 
     return res.status(400).json({ error: 'Неверный тип' });
