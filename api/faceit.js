@@ -11,7 +11,7 @@ export default async function handler(req, res) {
   const FACEIT_API_KEY = 'cf9af14a-245b-4d36-80e4-721625d0532a'; // Твой ключ
   
   try {
-    // Получаем ID игрока
+    // ========== ПОЛУЧАЕМ ID И БАЗОВУЮ ИНФУ ==========
     const playerRes = await fetch(
       `https://open.faceit.com/data/v4/players?nickname=${nick}`,
       { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
@@ -28,7 +28,7 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Игрок не играет в CS2' });
     }
 
-    // Получаем общую статистику
+    // ========== ПОЛУЧАЕМ ОБЩУЮ СТАТИСТИКУ ==========
     const statsRes = await fetch(
       `https://open.faceit.com/data/v4/players/${playerId}/stats/cs2`,
       { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
@@ -37,29 +37,32 @@ export default async function handler(req, res) {
     
     const lifetime = statsData.lifetime || {};
 
-    // Парсим числа (убираем пробелы и запятые)
-    const cleanNumber = (str) => parseInt(String(str || "0").replace(/\s/g, '').replace(/,/g, '')) || 0;
-    const cleanFloat = (str) => parseFloat(String(str || "1.0").replace(/\s/g, '').replace(/,/g, '')) || 1.0;
+    // 🔧 Очистка чисел от любых символов (пробелы, запятые, точки)
+    const cleanNumber = (val) => {
+      if (!val) return 0;
+      const str = String(val).replace(/[^\d.-]/g, ''); // оставляем только цифры, точку, минус
+      return parseFloat(str) || 0;
+    };
 
     const matches = cleanNumber(lifetime["Matches"]);
     const kills = cleanNumber(lifetime["Kills"]);
-    const kd = cleanFloat(lifetime["Average K/D Ratio"]);
-    const winRate = cleanFloat(lifetime["Win Rate %"]);
+    const kd = cleanNumber(lifetime["Average K/D Ratio"]) || 1.0;
+    const winRate = cleanNumber(lifetime["Win Rate %"]);
     const avgKills = matches > 0 ? (kills / matches).toFixed(1) : "0.0";
 
-    // !elo
+    // ========== КОМАНДА !elo ==========
     if (!type || type === 'base') {
       const result = `${nick} | Уровень: ${cs2Stats.skill_level}, Эло: ${cs2Stats.faceit_elo}`;
       return res.status(200).send(result);
     }
 
-    // !avg
+    // ========== КОМАНДА !avg ==========
     if (type === 'avg') {
       const result = `${nick} | За ${matches} матчей: K/D: ${kd.toFixed(2)}, Убийств/игру: ${avgKills}, Винрейт: ${winRate}%`;
       return res.status(200).send(result);
     }
 
-    // !last
+    // ========== КОМАНДА !last ==========
     if (type === 'last') {
       // Получаем последний матч из истории
       const historyRes = await fetch(
@@ -74,22 +77,34 @@ export default async function handler(req, res) {
       
       const lastMatch = historyData.items[0];
       
-      // Ищем игрока в командах матча (данные уже есть в history)
+      // 🔍 Универсальный поиск статистики игрока в матче
       let playerStats = null;
-      if (lastMatch.teams) {
-        if (lastMatch.teams.faction1?.players) {
-          for (const player of lastMatch.teams.faction1.players) {
-            if (player.player_id === playerId) {
-              playerStats = player.player_stats;
-              break;
+      
+      // teams может быть массивом или объектом с faction1/faction2
+      const teams = lastMatch.teams;
+      if (teams) {
+        if (Array.isArray(teams)) {
+          // Если teams — массив
+          for (const team of teams) {
+            if (team.players && Array.isArray(team.players)) {
+              for (const player of team.players) {
+                if (player.player_id === playerId) {
+                  playerStats = player.player_stats;
+                  break;
+                }
+              }
             }
           }
-        }
-        if (!playerStats && lastMatch.teams.faction2?.players) {
-          for (const player of lastMatch.teams.faction2.players) {
-            if (player.player_id === playerId) {
-              playerStats = player.player_stats;
-              break;
+        } else {
+          // Если teams — объект (faction1, faction2)
+          for (const faction of ['faction1', 'faction2']) {
+            if (teams[faction] && teams[faction].players) {
+              for (const player of teams[faction].players) {
+                if (player.player_id === playerId) {
+                  playerStats = player.player_stats;
+                  break;
+                }
+              }
             }
           }
         }
@@ -102,11 +117,24 @@ export default async function handler(req, res) {
       // Определяем победу
       const winnerId = lastMatch.results?.winner;
       let playerTeamId = null;
-      if (lastMatch.teams?.faction1?.players?.some(p => p.player_id === playerId)) {
-        playerTeamId = lastMatch.teams.faction1.faction_id;
-      } else if (lastMatch.teams?.faction2?.players?.some(p => p.player_id === playerId)) {
-        playerTeamId = lastMatch.teams.faction2.faction_id;
+      
+      if (teams) {
+        if (Array.isArray(teams)) {
+          for (const team of teams) {
+            if (team.players?.some(p => p.player_id === playerId)) {
+              playerTeamId = team.team_id;
+              break;
+            }
+          }
+        } else {
+          if (teams.faction1?.players?.some(p => p.player_id === playerId)) {
+            playerTeamId = teams.faction1.faction_id;
+          } else if (teams.faction2?.players?.some(p => p.player_id === playerId)) {
+            playerTeamId = teams.faction2.faction_id;
+          }
+        }
       }
+      
       const isWinner = winnerId === playerTeamId;
       
       const map = lastMatch.iwname || "неизвестно";
