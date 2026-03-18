@@ -10,7 +10,7 @@ export default async function handler(req, res) {
   }
 
   // ТВОЙ API-ключ FACEIT (вставь сюда свой)
-  const FACEIT_API_KEY = 'cf9af14a-245b-4d36-80e4-721625d0532a';
+  const FACEIT_API_KEY = 'cf9af14a-245b-4d36-80e4-721625d0532a'; // Я вставил тестовый, но лучше свой
   
   try {
     // 1. Сначала получаем базовую информацию (нужен ID игрока)
@@ -52,33 +52,41 @@ export default async function handler(req, res) {
       
       const statsData = await statsResponse.json();
       
-      // Считаем средние показатели за последние 20 матчей
-      const kills = parseInt(statsData.lifetime["Kills"]) || 0;
-      const deaths = parseInt(statsData.lifetime["Deaths"]) || 1;
-      const kd = (kills / deaths).toFixed(2);
-      const wins = parseInt(statsData.lifetime["Wins"]) || 0;
-      const matches = parseInt(statsData.lifetime["Matches"]) || 1;
+      // Аккуратно парсим числа (убираем всё лишнее)
+      const kills = parseInt(String(statsData.lifetime?.["Kills"] || "0").replace(/\s/g, '')) || 0;
+      const deaths = parseInt(String(statsData.lifetime?.["Deaths"] || "1").replace(/\s/g, '')) || 1;
+      const wins = parseInt(String(statsData.lifetime?.["Wins"] || "0").replace(/\s/g, '')) || 0;
+      const matches = parseInt(String(statsData.lifetime?.["Matches"] || "1").replace(/\s/g, '')) || 1;
+      
+      // Считаем K/D (защита от деления на ноль)
+      const kd = (deaths > 0) ? (kills / deaths).toFixed(2) : "0.00";
+      
+      // Винрейт
       const winRate = ((wins / matches) * 100).toFixed(1);
       
       if (type === 'avg') {
-        // Средняя статистика за 20 игр
+        // Средние показатели за матч
         const avgKills = (kills / matches).toFixed(1);
         const avgDeaths = (deaths / matches).toFixed(1);
-        const result = `${nick} | Среднее за 20 игр: K/D: ${kd}, Убийств: ${avgKills}, Смертей: ${avgDeaths}, Винрейт: ${winRate}%`;
+        
+        const result = `${nick} | Среднее: K/D: ${kd}, Убийств: ${avgKills}, Смертей: ${avgDeaths}, Винрейт: ${winRate}% (матчей: ${matches})`;
         return res.status(200).send(result);
       }
       
       if (type === 'last') {
         // Берем последний матч из сегментов
-        const lastMatch = statsData.segments[0];
+        const lastMatch = statsData.segments?.[0];
         if (!lastMatch) {
           return res.status(404).json({ error: 'Нет данных о последнем матче' });
         }
         
-        const lastKills = lastMatch.stats["Kills"];
-        const lastDeaths = lastMatch.stats["Deaths"];
+        const lastKills = parseInt(String(lastMatch.stats?.["Kills"] || "0").replace(/\s/g, '')) || 0;
+        const lastDeaths = parseInt(String(lastMatch.stats?.["Deaths"] || "1").replace(/\s/g, '')) || 1;
         const lastKd = (lastKills / lastDeaths).toFixed(2);
-        const result = `${nick} | Последний матч: ${lastKills}/${lastDeaths} (K/D: ${lastKd}), Карта: ${lastMatch.stats["Map"] || "N/A"}`;
+        const map = lastMatch.stats?.["Map"] || "неизвестно";
+        const resultText = lastMatch.stats?.["Result"] === "1" ? "Победа" : "Поражение";
+        
+        const result = `${nick} | Последний матч: ${lastKills}/${lastKd} (K/D: ${lastKd}), ${map}, ${resultText}`;
         return res.status(200).send(result);
       }
     }
