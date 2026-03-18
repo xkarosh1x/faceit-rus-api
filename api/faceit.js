@@ -1,4 +1,4 @@
-// api/faceit.js - ФИНАЛЬНАЯ ВЕРСИЯ (avg по варианту 3)
+// api/faceit.js - защищённая версия
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   
@@ -8,7 +8,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Укажи ник: ?nick=xKarosh1x' });
   }
 
-  const FACEIT_API_KEY = 'cf9af14a-245b-4d36-80e4-721625d0532a'; // твой ключ
+  const FACEIT_API_KEY = 'cf9af14a-245b-4d36-80e4-721625d0532a';
   
   try {
     // ========== ПОЛУЧАЕМ ID ИГРОКА ==========
@@ -39,9 +39,10 @@ export default async function handler(req, res) {
 
     // очистка чисел
     const cleanNumber = (val) => {
-      if (!val) return 0;
+      if (val === undefined || val === null) return 0;
       const str = String(val).replace(/[^\d.-]/g, '');
-      return parseFloat(str) || 0;
+      const num = parseFloat(str);
+      return isNaN(num) ? 0 : num;
     };
 
     const matches = cleanNumber(lifetime["Matches"]);
@@ -52,82 +53,87 @@ export default async function handler(req, res) {
 
     // ========== !elo ==========
     if (!type || type === 'base') {
-      const result = `${nick} | LVL: ${cs2Stats.skill_level}, ELO: ${cs2Stats.faceit_elo}`;
+      const result = `${nick} | Уровень: ${cs2Stats.skill_level}, Эло: ${cs2Stats.faceit_elo}`;
       return res.status(200).send(result);
     }
 
     // ========== !avg ==========
     if (type === 'avg') {
-      const result = `${nick} | AVG: ${avgKills}, KD: ${kd.toFixed(2)}, WR: ${winRate}%`;
+      const result = `${nick} | Убийств/игру: ${avgKills}, K/D: ${kd.toFixed(2)}, Винрейт: ${winRate}%`;
       return res.status(200).send(result);
     }
 
     // ========== !last ==========
     if (type === 'last') {
-      try {
-        const historyRes = await fetch(
-          `https://open.faceit.com/data/v4/players/${playerId}/history?game=cs2&offset=0&limit=1`,
-          { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
-        );
-        const historyData = await historyRes.json();
+      // Получаем последний матч из истории
+      const historyRes = await fetch(
+        `https://open.faceit.com/data/v4/players/${playerId}/history?game=cs2&offset=0&limit=1`,
+        { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
+      );
+      const historyData = await historyRes.json();
+      
+      if (!historyData.items || historyData.items.length === 0) {
+        return res.status(200).send(`${nick} | Нет данных о последнем матче`);
+      }
+      
+      const lastMatch = historyData.items[0];
+      
+      const matchRes = await fetch(
+        `https://open.faceit.com/data/v4/matches/${lastMatch.match_id}/stats`,
+        { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
+      );
+      const matchData = await matchRes.json();
 
-        if (!historyData.items || historyData.items.length === 0) {
-          return res.status(200).send(`${nick} | Нет данных о последнем матче`);
-        }
+      let playerStats = null;
+      let playerTeamId = null;
 
-        const lastMatch = historyData.items[0];
-
-        const matchRes = await fetch(
-          `https://open.faceit.com/data/v4/matches/${lastMatch.match_id}/stats`,
-          { headers: { 'Authorization': `Bearer ${FACEIT_API_KEY}` } }
-        );
-        const matchData = await matchRes.json();
-
-        let playerStats = null;
-        let playerTeamId = null;
-
-        if (matchData?.rounds?.[0]?.teams) {
-          for (const team of matchData.rounds[0].teams) {
-            if (team?.players) {
-              for (const player of team.players) {
-                if (player?.player_id === playerId) {
-                  playerStats = player.player_stats;
-                  playerTeamId = team.team_id;
-                  break;
-                }
+      if (matchData?.rounds?.[0]?.teams) {
+        for (const team of matchData.rounds[0].teams) {
+          if (team?.players) {
+            for (const player of team.players) {
+              if (player?.player_id === playerId) {
+                playerStats = player.player_stats;
+                playerTeamId = team.team_id;
+                break;
               }
             }
           }
         }
-
-        if (!playerStats) {
-          return res.status(200).send(`${nick} | Не удалось найти статистику игрока в последнем матче`);
-        }
-
-        // Определяем карту
-        let map = "неизвестно";
-        if (matchData?.rounds?.[0]?.round_stats?.Map) {
-          map = matchData.rounds[0].round_stats.Map;
-        } else if (lastMatch?.iwname) {
-          map = lastMatch.iwname;
-        }
-
-        // Результат матча
-        const winnerId = lastMatch.results?.winner;
-        const isWinner = winnerId === playerTeamId;
-        const resultText = isWinner ? "Победа" : "Поражение";
-
-        const matchKills = playerStats["Kills"] || "0";
-        const matchDeaths = playerStats["Deaths"] || "1";
-        const matchKd = (parseInt(matchKills) / parseInt(matchDeaths)).toFixed(2);
-
-        const result = `${nick} | Последний матч: ${map}, ${matchKills}/${matchDeaths} (K/D: ${matchKd}), ${resultText}`;
-        return res.status(200).send(result);
-      } catch (error) {
-        console.error('Ошибка в !last:', error);
-        return res.status(200).send(`${nick} | Ошибка при получении последнего матча`);
       }
+
+      if (!playerStats) {
+        return res.status(200).send(`${nick} | Не удалось найти статистику игрока в последнем матче`);
+      }
+
+      // Определяем карту
+      let map = "неизвестно";
+      if (matchData?.rounds?.[0]?.round_stats?.Map) {
+        map = matchData.rounds[0].round_stats.Map;
+      } else if (lastMatch?.iwname) {
+        map = lastMatch.iwname;
+      }
+
+      // Результат матча
+      const winnerId = lastMatch.results?.winner;
+      const isWinner = winnerId === playerTeamId;
+      const resultText = isWinner ? "Победа" : "Поражение";
+
+      const matchKills = playerStats["Kills"] || "0";
+      const matchDeaths = playerStats["Deaths"] || "1";
+      const matchKd = (parseInt(matchKills) / parseInt(matchDeaths)).toFixed(2);
+
+      const result = `${nick} | Последний матч: ${map}, ${matchKills}/${matchDeaths} (K/D: ${matchKd}), ${resultText}`;
+      return res.status(200).send(result);
     }
-  const result = `${nick} | Последний матч: ${map}, ${matchKills}/${matchDeaths} (K/D: ${matchKd}), ${resultText}`;
-  return res.status(200).send(result);
+
+    return res.status(400).json({ error: 'Неверный тип' });
+    
+  } catch (error) {
+    console.error('Глобальная ошибка:', error);
+    return res.status(500).json({ 
+      error: 'Внутренняя ошибка сервера', 
+      details: error.message,
+      stack: error.stack 
+    });
+  }
 }
